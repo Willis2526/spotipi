@@ -1,3 +1,9 @@
+# Spotipi config files
+config.json
+
+# Spotify cache files
+.spotify_cache
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
