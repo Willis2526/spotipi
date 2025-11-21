@@ -1,4 +1,11 @@
-# Spotify Controller Web UI
+# Spotipi
+
+> A modern, responsive Spotify controller web interface designed for Raspberry Pi and other devices, featuring Android Auto-inspired design with ambient album art effects.
+
+[![Python](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com/)
+[![Vue.js](https://img.shields.io/badge/Vue.js-3-brightgreen.svg)](https://vuejs.org/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A sleek, modern web-based Spotify controller built with FastAPI and Vue.js that can run on any system including Raspberry Pi. Control your Spotify playback with a beautiful, responsive interface from any device on your network.
 
@@ -59,8 +66,8 @@ The UI features:
 ```bash
 # Clone or download the files to your system
 cd ~
-mkdir spotify-controller
-cd spotify-controller
+mkdir spotipi
+cd spotipi
 
 # Run the automated installation script
 chmod +x install.sh
@@ -90,7 +97,7 @@ pip install -r requirements.txt
 
 ```bash
 # Navigate to the directory
-cd spotify-controller
+cd spotipi
 
 # Create a virtual environment
 python -m venv venv
@@ -174,20 +181,20 @@ The install script can set this up automatically, or manually:
 
 1. Create a service file:
 ```bash
-sudo nano /etc/systemd/system/spotify-controller.service
+sudo nano /etc/systemd/system/spotipi.service
 ```
 
 2. Add this content (adjust paths):
 ```ini
 [Unit]
-Description=Spotify Controller Web UI
+Description=Spotipi Web UI
 After=network.target
 
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/spotify-controller
-ExecStart=/home/pi/spotify-controller/venv/bin/python /home/pi/spotify-controller/server.py
+WorkingDirectory=/home/pi/spotipi
+ExecStart=/home/pi/spotipi/venv/bin/python /home/pi/spotipi/server.py
 Restart=always
 RestartSec=10
 
@@ -197,18 +204,18 @@ WantedBy=multi-user.target
 
 3. Enable and start the service:
 ```bash
-sudo systemctl enable spotify-controller
-sudo systemctl start spotify-controller
+sudo systemctl enable spotipi
+sudo systemctl start spotipi
 ```
 
 4. Check status:
 ```bash
-sudo systemctl status spotify-controller
+sudo systemctl status spotipi
 ```
 
 5. View logs:
 ```bash
-sudo journalctl -u spotify-controller -f
+sudo journalctl -u spotipi -f
 ```
 
 ### Method 2: Crontab
@@ -219,7 +226,7 @@ crontab -e
 
 Add this line:
 ```
-@reboot sleep 30 && cd /home/pi/spotify-controller && /home/pi/spotify-controller/venv/bin/python server.py > /tmp/spotify.log 2>&1
+@reboot sleep 30 && cd /home/pi/spotipi && /home/pi/spotipi/venv/bin/python server.py > /tmp/spotify.log 2>&1
 ```
 
 ## Configuration
@@ -288,7 +295,7 @@ The FastAPI server exposes these REST API endpoints:
 
 ### Project Structure
 ```
-spotify-controller/
+spotipi/
 ├── server.py    # FastAPI backend
 ├── templates/
 │   └── index.html           # Vue.js frontend

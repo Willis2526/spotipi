@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# Spotify Controller Installation Script
+# Spotipi Installation Script
 # For Linux/Raspberry Pi
 
 echo "=========================================="
-echo "Spotify Controller Installation"
+echo "Spotipi Installation"
 echo "=========================================="
 echo ""
 
@@ -99,9 +99,9 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     
     echo "Creating systemd service..."
     
-    sudo tee /etc/systemd/system/spotify-controller.service > /dev/null <<EOF
+    sudo tee /etc/systemd/system/spotipi.service > /dev/null <<EOF
 [Unit]
-Description=Spotify Controller Web UI
+Description=Spotipi Web UI
 After=network.target
 
 [Service]
@@ -117,18 +117,18 @@ WantedBy=multi-user.target
 EOF
 
     sudo systemctl daemon-reload
-    sudo systemctl enable spotify-controller
+    sudo systemctl enable spotipi
     
     echo "✓ Systemd service created and enabled"
     echo ""
     echo "Service commands:"
-    echo "  Start:   sudo systemctl start spotify-controller"
-    echo "  Stop:    sudo systemctl stop spotify-controller"
-    echo "  Status:  sudo systemctl status spotify-controller"
-    echo "  Logs:    sudo journalctl -u spotify-controller -f"
+    echo "  Start:   sudo systemctl start spotipi"
+    echo "  Stop:    sudo systemctl stop spotipi"
+    echo "  Status:  sudo systemctl status spotipi"
+    echo "  Logs:    sudo journalctl -u spotipi -f"
     echo ""
     echo "To start now, run:"
-    echo "  sudo systemctl start spotify-controller"
+    echo "  sudo systemctl start spotipi"
 fi
 
 echo ""
