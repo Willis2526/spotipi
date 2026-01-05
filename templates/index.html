@@ -234,10 +234,29 @@
             padding: 12px 20px;
             border-radius: 8px;
             display: none;
+            z-index: 3000;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            animation: slideDown 0.3s ease;
         }
 
         .error.show {
             display: block;
+        }
+
+        .error.success {
+            background: #1db954;
+            color: white;
+        }
+
+        @keyframes slideDown {
+            from {
+                transform: translateX(-50%) translateY(-20px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(-50%) translateY(0);
+                opacity: 1;
+            }
         }
 
         .idle-state {
@@ -482,8 +501,8 @@
 </head>
 <body>
     <div id="app">
-        <!-- Error Message -->
-        <div class="error" :class="{ show: error }">{{ error }}</div>
+        <!-- Error/Success Message -->
+        <div class="error" :class="{ show: error, success: errorType === 'success' }">{{ error }}</div>
 
         <!-- Settings Button -->
         <button class="settings-btn" @click="showSettings = true">
@@ -576,6 +595,53 @@
             </div>
         </div>
 
+        <!-- Setup Wizard Modal -->
+        <div class="modal" :class="{ show: showSetupWizard }" style="z-index: 2000;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>{{ setupStatus.needs_setup ? 'Setup Spotify Controller' : 'Authenticate with Spotify' }}</h2>
+                </div>
+
+                <!-- Step 1: Enter Credentials -->
+                <div v-if="setupStatus.needs_setup || showCredentialsForm">
+                    <p style="margin-bottom: 20px; color: rgba(255,255,255,0.7); line-height: 1.6;">
+                        To get started, you'll need to create a Spotify Developer App.
+                        Visit <a href="https://developer.spotify.com/dashboard" target="_blank" style="color: #1db954;">developer.spotify.com/dashboard</a>
+                        to create an app and get your credentials.
+                    </p>
+
+                    <div class="form-group">
+                        <label>Client ID</label>
+                        <input v-model="config.client_id" type="text" placeholder="Enter your Spotify Client ID">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Client Secret</label>
+                        <input v-model="config.client_secret" type="password" placeholder="Enter your Spotify Client Secret">
+                    </div>
+
+                    <button class="save-btn" @click="saveSetup">Continue to Authentication</button>
+                </div>
+
+                <!-- Step 2: Auto-redirecting (shouldn't normally see this) -->
+                <div v-else-if="setupStatus.needs_auth">
+                    <p style="margin-bottom: 20px; color: rgba(255,255,255,0.7); line-height: 1.6; text-align: center;">
+                        <svg viewBox="0 0 24 24" style="width: 48px; height: 48px; margin-bottom: 16px; fill: #1db954; animation: spin 2s linear infinite;">
+                            <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm3.75 14.65c-2.35-1.45-5.3-1.75-8.8-.95-.35.1-.65-.15-.75-.45-.1-.35.15-.65.45-.75 3.8-.85 7.1-.5 9.7 1.1.35.15.4.55.25.85-.2.3-.55.4-.85.2zm1-2.7c-2.7-1.65-6.8-2.15-9.95-1.15-.4.1-.85-.1-.95-.5-.1-.4.1-.85.5-.95 3.65-1.1 8.15-.55 11.25 1.35.3.15.45.65.2 1s-.7.5-1.05.25zM6.3 9.75c-.5.15-1-.15-1.15-.6-.15-.5.15-1 .6-1.15 3.55-1.05 9.4-.85 13.1 1.35.45.25.6.85.35 1.3-.25.35-.85.5-1.3.25C14.7 9 9.35 8.8 6.3 9.75z"/>
+                        </svg>
+                        <br>
+                        <strong>Redirecting to Spotify...</strong>
+                    </p>
+                    <style>
+                        @keyframes spin {
+                            from { transform: rotate(0deg); }
+                            to { transform: rotate(360deg); }
+                        }
+                    </style>
+                </div>
+            </div>
+        </div>
+
         <!-- Settings Modal -->
         <div class="modal" :class="{ show: showSettings }" @click.self="showSettings = false">
             <div class="modal-content">
@@ -626,8 +692,17 @@
                         client_secret: '',
                         redirect_uri: 'http://localhost:8888/callback'
                     },
+                    setupStatus: {
+                        has_credentials: false,
+                        is_authenticated: false,
+                        needs_setup: true,
+                        needs_auth: false
+                    },
                     showSettings: false,
+                    showSetupWizard: false,
+                    showCredentialsForm: false,
                     error: '',
+                    errorType: 'error',
                     isIdle: false,
                     updateInterval: null
                 }
@@ -639,11 +714,72 @@
                 }
             },
             mounted() {
+                this.checkURLParams();
+                this.checkSetupStatus();
                 this.loadConfig();
                 this.updatePlayback();
                 this.startAutoUpdate();
             },
             methods: {
+                checkURLParams() {
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const error = urlParams.get('error');
+                    const errorDescription = urlParams.get('error_description');
+                    const success = urlParams.get('success');
+
+                    if (success) {
+                        this.showError('✓ Authentication successful!', 'success');
+                        this.checkSetupStatus(); // Refresh status
+                    } else if (error) {
+                        // Handle Spotify's errors (invalid_client, etc.) and our custom errors
+                        const errorMessages = {
+                            'invalid_client': 'Invalid Client ID or Secret. Please check your credentials in Settings.',
+                            'access_denied': 'Authentication cancelled. Please try again when you\'re ready.',
+                            'auth_failed': 'Authentication failed. Please try again.',
+                            'config_error': 'Configuration error. Please check your credentials.',
+                            'token_failed': 'Failed to obtain access token. Please check your credentials.',
+                            'auth_error': 'Authentication error occurred. Please try again.',
+                            'no_code': 'Invalid authentication response. Please try again.'
+                        };
+
+                        let errorMsg = errorMessages[error] || 'Authentication error. Please try again.';
+
+                        // If there's an error description from Spotify, show it
+                        if (errorDescription && error === 'invalid_client') {
+                            errorMsg = 'Invalid credentials. Please verify your Client ID and Secret in Settings.';
+                        }
+
+                        this.showError(errorMsg);
+                        this.showSetupWizard = true; // Show wizard to try again
+                        this.showCredentialsForm = true; // Allow re-entering credentials
+                    }
+
+                    // Clean up URL
+                    if (error || success) {
+                        window.history.replaceState({}, document.title, '/');
+                    }
+                },
+                async checkSetupStatus() {
+                    try {
+                        const res = await fetch('/api/setup/status');
+                        this.setupStatus = await res.json();
+
+                        // Show setup wizard if needed, otherwise close it
+                        if (this.setupStatus.needs_setup || this.setupStatus.needs_auth) {
+                            this.showSetupWizard = true;
+
+                            // If credentials exist but not authenticated, auto-redirect
+                            if (this.setupStatus.needs_auth && !this.setupStatus.needs_setup && !this.showCredentialsForm) {
+                                // Small delay to show the "Redirecting" message, then auto-redirect
+                                setTimeout(() => this.authenticateWithSpotify(), 500);
+                            }
+                        } else {
+                            this.showSetupWizard = false;
+                        }
+                    } catch (e) {
+                        console.error('Error checking setup status:', e);
+                    }
+                },
                 async loadConfig() {
                     try {
                         const res = await fetch('/api/config');
@@ -652,15 +788,88 @@
                         console.error('Error loading config:', e);
                     }
                 },
-                async saveConfig() {
+                async saveSetup() {
+                    // Validate credentials are not empty
+                    if (!this.config.client_id || !this.config.client_secret) {
+                        this.showError('Please enter both Client ID and Client Secret');
+                        return;
+                    }
+
+                    // Basic validation for credential format
+                    if (this.config.client_id.length < 10 || this.config.client_secret.length < 10) {
+                        this.showError('Credentials appear to be invalid. Please check and try again.');
+                        return;
+                    }
+
                     try {
-                        await fetch('/api/config', {
+                        const res = await fetch('/api/setup', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(this.config)
+                            body: JSON.stringify({
+                                client_id: this.config.client_id,
+                                client_secret: this.config.client_secret
+                            })
                         });
-                        this.showSettings = false;
-                        this.showError('Configuration saved! Please restart server.');
+
+                        if (res.ok) {
+                            this.showCredentialsForm = false; // Hide form after successful save
+                            // Automatically redirect to Spotify auth
+                            this.authenticateWithSpotify();
+                        } else {
+                            this.showError('Error saving credentials');
+                        }
+                    } catch (e) {
+                        this.showError('Error saving credentials');
+                    }
+                },
+                async authenticateWithSpotify() {
+                    try {
+                        const res = await fetch('/api/auth/url');
+                        const data = await res.json();
+
+                        if (data.authenticated) {
+                            this.showSetupWizard = false;
+                            this.checkSetupStatus();
+                            this.updatePlayback();
+                        } else if (data.auth_url) {
+                            // Redirect to Spotify for authentication
+                            window.location.href = data.auth_url;
+                        }
+                    } catch (e) {
+                        this.showError('Error starting authentication');
+                    }
+                },
+                async saveConfig() {
+                    // Validate credentials are not empty
+                    if (!this.config.client_id || !this.config.client_secret) {
+                        this.showError('Please enter both Client ID and Client Secret');
+                        return;
+                    }
+
+                    // Basic validation for credential format
+                    if (this.config.client_id.length < 10 || this.config.client_secret.length < 10) {
+                        this.showError('Credentials appear to be invalid. Please check and try again.');
+                        return;
+                    }
+
+                    try {
+                        // Use setup endpoint to trigger cache clearing and auto-auth
+                        const res = await fetch('/api/setup', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                client_id: this.config.client_id,
+                                client_secret: this.config.client_secret
+                            })
+                        });
+
+                        if (res.ok) {
+                            this.showSettings = false;
+                            // Automatically redirect to re-authenticate
+                            this.authenticateWithSpotify();
+                        } else {
+                            this.showError('Error saving configuration');
+                        }
                     } catch (e) {
                         this.showError('Error saving config');
                     }
@@ -807,9 +1016,10 @@
                     const secs = seconds % 60;
                     return `${mins}:${secs.toString().padStart(2, '0')}`;
                 },
-                showError(msg) {
+                showError(msg, type = 'error') {
                     this.error = msg;
-                    setTimeout(() => this.error = '', 5000);
+                    this.errorType = type;
+                    setTimeout(() => this.error = '', type === 'success' ? 3000 : 5000);
                 },
                 onAlbumArtLoad() {
                     // Album art loaded - glow effect is already applied via CSS

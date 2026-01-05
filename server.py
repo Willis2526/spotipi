@@ -4,8 +4,8 @@ Spotify Controller Server
 A web-based Spotify controller with a modern UI using FastAPI
 """
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
@@ -27,6 +27,9 @@ DEFAULT_CONFIG = {
     "host": "0.0.0.0"
 }
 
+# Global state for auth manager
+_auth_manager_cache = None
+
 # Pydantic models
 class Config(BaseModel):
     client_id: Optional[str] = ""
@@ -47,6 +50,10 @@ class RepeatRequest(BaseModel):
 class SeekRequest(BaseModel):
     position_ms: int
 
+class SetupRequest(BaseModel):
+    client_id: str
+    client_secret: str
+
 
 def load_config():
     """Load configuration from file"""
@@ -61,22 +68,45 @@ def save_config(config: dict):
     with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=2)
 
-def get_spotify_client():
-    """Get authenticated Spotify client"""
+def get_auth_manager():
+    """Get Spotify OAuth manager"""
+    global _auth_manager_cache
+
     config = load_config()
-    
+
     if not config["client_id"] or not config["client_secret"]:
         return None
-    
-    try:
+
+    # Create manager if not cached
+    if _auth_manager_cache is None:
         scope = "user-read-playback-state,user-modify-playback-state,user-read-currently-playing"
-        sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
+        _auth_manager_cache = SpotifyOAuth(
             client_id=config["client_id"],
             client_secret=config["client_secret"],
             redirect_uri=config["redirect_uri"],
             scope=scope,
-            cache_path=str(CACHE_FILE)
-        ))
+            cache_path=str(CACHE_FILE),
+            open_browser=False,
+            show_dialog=False
+        )
+
+    return _auth_manager_cache
+
+def get_spotify_client():
+    """Get authenticated Spotify client"""
+    auth_manager = get_auth_manager()
+
+    if not auth_manager:
+        return None
+
+    try:
+        # Check if we have a cached token (don't trigger auth flow)
+        token_info = auth_manager.get_cached_token()
+        if not token_info:
+            return None
+
+        # Use auth_manager so tokens auto-refresh
+        sp = spotipy.Spotify(auth_manager=auth_manager)
         return sp
     except Exception as e:
         print(f"Error creating Spotify client: {e}")
@@ -121,7 +151,37 @@ class SpotifyController:
             methods=["POST"],
             include_in_schema=True
         )
-        
+
+        # Setup endpoints
+        self.app.add_api_route(
+            path="/api/setup/status",
+            endpoint=self.get_setup_status_handler,
+            methods=["GET"],
+            include_in_schema=True
+        )
+
+        self.app.add_api_route(
+            path="/api/setup",
+            endpoint=self.setup_credentials_handler,
+            methods=["POST"],
+            include_in_schema=True
+        )
+
+        # OAuth endpoints
+        self.app.add_api_route(
+            path="/api/auth/url",
+            endpoint=self.get_auth_url_handler,
+            methods=["GET"],
+            include_in_schema=True
+        )
+
+        self.app.add_api_route(
+            path="/callback",
+            endpoint=self.oauth_callback_handler,
+            methods=["GET"],
+            include_in_schema=False
+        )
+
         # Playback endpoints
         self.app.add_api_route(
             path="/api/playback",
@@ -219,12 +279,108 @@ class SpotifyController:
         
         save_config(current_config)
         return {"success": True}
-    
+
+    async def get_setup_status_handler(self):
+        """Check if credentials are configured"""
+        config = load_config()
+        has_credentials = bool(config["client_id"] and config["client_secret"])
+
+        # Check if user is authenticated
+        is_authenticated = False
+        if has_credentials:
+            auth_manager = get_auth_manager()
+            if auth_manager:
+                token_info = auth_manager.get_cached_token()
+                is_authenticated = bool(token_info)
+
+        return {
+            "has_credentials": has_credentials,
+            "is_authenticated": is_authenticated,
+            "needs_setup": not has_credentials,
+            "needs_auth": has_credentials and not is_authenticated
+        }
+
+    async def setup_credentials_handler(self, setup: SetupRequest):
+        """Setup Spotify API credentials via web UI"""
+        if not setup.client_id or not setup.client_secret:
+            raise HTTPException(status_code=400, detail="client_id and client_secret are required")
+
+        # Load current config and update credentials
+        config = load_config()
+        config["client_id"] = setup.client_id
+        config["client_secret"] = setup.client_secret
+
+        # Save to config file
+        save_config(config)
+
+        # Clear cached auth manager so new credentials are used
+        global _auth_manager_cache
+        _auth_manager_cache = None
+
+        # Delete old token cache since credentials changed
+        if CACHE_FILE.exists():
+            CACHE_FILE.unlink()
+            print("🗑️  Cleared old authentication cache")
+
+        print(f"✅ Credentials updated via web UI - client_id: {setup.client_id[:20]}...")
+
+        return {
+            "success": True,
+            "message": "Credentials saved. Please authenticate with Spotify using /api/auth/url"
+        }
+
+    async def get_auth_url_handler(self):
+        """Get Spotify authorization URL"""
+        auth_manager = get_auth_manager()
+        if not auth_manager:
+            raise HTTPException(status_code=401, detail="Not configured")
+
+        # Check if already authenticated
+        token_info = auth_manager.get_cached_token()
+        if token_info:
+            return {"authenticated": True, "auth_url": None}
+
+        # Get authorization URL
+        auth_url = auth_manager.get_authorize_url()
+        return {"authenticated": False, "auth_url": auth_url}
+
+    async def oauth_callback_handler(self, request: Request):
+        """Handle Spotify OAuth callback"""
+        code = request.query_params.get('code')
+        error = request.query_params.get('error')
+
+        if error:
+            # Redirect to main page with error message
+            error_msg = "access_denied" if error == "access_denied" else "auth_failed"
+            return RedirectResponse(url=f"/?error={error_msg}", status_code=302)
+
+        if code:
+            try:
+                # Exchange code for token
+                auth_manager = get_auth_manager()
+                if not auth_manager:
+                    return RedirectResponse(url="/?error=config_error", status_code=302)
+
+                # Get the full callback URL
+                callback_url = str(request.url)
+                token_info = auth_manager.get_access_token(code, as_dict=True, check_cache=False)
+
+                if token_info:
+                    # Redirect back to main page - success!
+                    return RedirectResponse(url="/?success=true", status_code=302)
+                else:
+                    return RedirectResponse(url="/?error=token_failed", status_code=302)
+            except Exception as e:
+                print(f"Error during OAuth callback: {e}")
+                return RedirectResponse(url="/?error=auth_error", status_code=302)
+
+        return RedirectResponse(url="/?error=no_code", status_code=302)
+
     async def get_playback_handler(self):
         """Get current playback state"""
         sp = get_spotify_client()
         if not sp:
-            raise HTTPException(status_code=401, detail="Not configured")
+            raise HTTPException(status_code=401, detail="Not authenticated. Please visit /api/auth/url to get the authorization link.")
         
         try:
             playback = sp.current_playback()
