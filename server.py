@@ -13,6 +13,12 @@ import json
 from pathlib import Path
 from typing import Optional
 import uvicorn
+import qrcode
+import secrets
+import time
+import socket
+import base64
+from io import BytesIO
 
 # Configuration file path - in project root
 CONFIG_FILE = Path(__file__).parent / "config.json"
@@ -29,6 +35,9 @@ DEFAULT_CONFIG = {
 
 # Global state for auth manager
 _auth_manager_cache = None
+
+# Global session store for QR code setup
+_setup_sessions = {}
 
 # Pydantic models
 class Config(BaseModel):
@@ -54,6 +63,16 @@ class SetupRequest(BaseModel):
     client_id: str
     client_secret: str
 
+class QRSetupSession(BaseModel):
+    session_id: str
+    qr_code_data_url: str
+    expires_in: int
+
+class QRCredentialsSubmit(BaseModel):
+    session_id: str
+    client_id: str
+    client_secret: str
+
 
 def load_config():
     """Load configuration from file"""
@@ -67,6 +86,79 @@ def save_config(config: dict):
     """Save configuration to file"""
     with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=2)
+
+def generate_session_id() -> str:
+    """Generate secure random session ID"""
+    return secrets.token_urlsafe(16)
+
+def create_setup_session() -> str:
+    """Create new QR setup session"""
+    session_id = generate_session_id()
+    now = time.time()
+    _setup_sessions[session_id] = {
+        "created_at": now,
+        "expires_at": now + 600,  # 10 minutes
+        "credentials": None,
+        "status": "pending"
+    }
+    cleanup_expired_sessions()
+    return session_id
+
+def cleanup_expired_sessions():
+    """Remove expired sessions"""
+    now = time.time()
+    expired = [sid for sid, sess in _setup_sessions.items()
+               if sess["expires_at"] < now]
+    for sid in expired:
+        del _setup_sessions[sid]
+
+def get_session(session_id: str) -> Optional[dict]:
+    """Get session by ID"""
+    cleanup_expired_sessions()
+    return _setup_sessions.get(session_id)
+
+def update_session_credentials(session_id: str, credentials: dict) -> bool:
+    """Update session with submitted credentials"""
+    session = get_session(session_id)
+    if session and session["status"] == "pending":
+        session["credentials"] = credentials
+        session["status"] = "completed"
+        return True
+    return False
+
+def get_local_ip() -> str:
+    """Get local network IP address"""
+    try:
+        # Create a socket to determine local IP
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+        return local_ip
+    except Exception:
+        return "127.0.0.1"  # Fallback
+
+def generate_qr_code(data: str) -> str:
+    """Generate QR code and return as base64 data URL"""
+    # Create QR code
+    qr = qrcode.QRCode(
+        version=1,  # Auto-size
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(data)
+    qr.make(fit=True)
+
+    # Create image
+    img = qr.make_image(fill_color="black", back_color="white")
+
+    # Convert to base64
+    buffer = BytesIO()
+    img.save(buffer, format="PNG")
+    img_str = base64.b64encode(buffer.getvalue()).decode()
+
+    return f"data:image/png;base64,{img_str}"
 
 def get_auth_manager():
     """Get Spotify OAuth manager"""
@@ -152,6 +244,13 @@ class SpotifyController:
             include_in_schema=True
         )
 
+        self.app.add_api_route(
+            path="/api/config",
+            endpoint=self.delete_config_handler,
+            methods=["DELETE"],
+            include_in_schema=True
+        )
+
         # Setup endpoints
         self.app.add_api_route(
             path="/api/setup/status",
@@ -165,6 +264,43 @@ class SpotifyController:
             endpoint=self.setup_credentials_handler,
             methods=["POST"],
             include_in_schema=True
+        )
+
+        # QR Code Setup endpoints
+        self.app.add_api_route(
+            path="/api/setup/qr/generate",
+            endpoint=self.generate_qr_setup_handler,
+            methods=["GET"],
+            include_in_schema=True
+        )
+
+        self.app.add_api_route(
+            path="/api/setup/qr/status/{session_id}",
+            endpoint=self.check_qr_setup_status_handler,
+            methods=["GET"],
+            include_in_schema=True
+        )
+
+        self.app.add_api_route(
+            path="/api/setup/qr/submit",
+            endpoint=self.submit_qr_credentials_handler,
+            methods=["POST"],
+            include_in_schema=True
+        )
+
+        self.app.add_api_route(
+            path="/api/setup/qr/complete/{session_id}",
+            endpoint=self.complete_qr_setup_handler,
+            methods=["POST"],
+            include_in_schema=True
+        )
+
+        self.app.add_api_route(
+            path="/setup",
+            endpoint=self.setup_page_handler,
+            methods=["GET"],
+            response_class=HTMLResponse,
+            include_in_schema=False
         )
 
         # OAuth endpoints
@@ -280,6 +416,29 @@ class SpotifyController:
         save_config(current_config)
         return {"success": True}
 
+    async def delete_config_handler(self):
+        """Delete credentials and reset Spotipi"""
+        config = load_config()
+
+        # Clear credentials
+        config["client_id"] = ""
+        config["client_secret"] = ""
+
+        save_config(config)
+
+        # Clear cached auth manager
+        global _auth_manager_cache
+        _auth_manager_cache = None
+
+        # Delete token cache
+        if CACHE_FILE.exists():
+            CACHE_FILE.unlink()
+            print("🗑️  Cleared authentication cache")
+
+        print("🔄 Spotipi reset - credentials deleted")
+
+        return {"success": True, "message": "Credentials deleted"}
+
     async def get_setup_status_handler(self):
         """Check if credentials are configured"""
         config = load_config()
@@ -328,6 +487,105 @@ class SpotifyController:
             "success": True,
             "message": "Credentials saved. Please authenticate with Spotify using /api/auth/url"
         }
+
+    async def generate_qr_setup_handler(self):
+        """Generate QR code for credential setup"""
+        session_id = create_setup_session()
+
+        # Get server URL
+        config = load_config()
+        local_ip = get_local_ip()
+        setup_url = f"http://{local_ip}:{config['port']}/setup?session={session_id}"
+
+        # Generate QR code
+        qr_data_url = generate_qr_code(setup_url)
+
+        return QRSetupSession(
+            session_id=session_id,
+            qr_code_data_url=qr_data_url,
+            expires_in=600
+        )
+
+    async def check_qr_setup_status_handler(self, session_id: str):
+        """Check if credentials have been submitted for session"""
+        session = get_session(session_id)
+
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found or expired")
+
+        return {
+            "status": session["status"],
+            "credentials_received": session["credentials"] is not None,
+            "expires_in": int(session["expires_at"] - time.time())
+        }
+
+    async def submit_qr_credentials_handler(self, submission: QRCredentialsSubmit):
+        """Submit credentials via QR code flow"""
+        session = get_session(submission.session_id)
+
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found or expired")
+
+        if session["status"] != "pending":
+            raise HTTPException(status_code=400, detail="Session already used")
+
+        # Validate credentials
+        if not submission.client_id or not submission.client_secret:
+            raise HTTPException(status_code=400, detail="Invalid credentials")
+
+        # Store credentials in session
+        update_session_credentials(submission.session_id, {
+            "client_id": submission.client_id,
+            "client_secret": submission.client_secret
+        })
+
+        return {"success": True, "message": "Credentials received"}
+
+    async def complete_qr_setup_handler(self, session_id: str):
+        """Complete QR setup by retrieving credentials from session"""
+        session = get_session(session_id)
+
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found or expired")
+
+        if session["status"] != "completed" or not session["credentials"]:
+            raise HTTPException(status_code=400, detail="Credentials not yet submitted")
+
+        credentials = session["credentials"]
+
+        # Save credentials using existing logic
+        config = load_config()
+        config["client_id"] = credentials["client_id"]
+        config["client_secret"] = credentials["client_secret"]
+        save_config(config)
+
+        # Clear cached auth manager
+        global _auth_manager_cache
+        _auth_manager_cache = None
+
+        # Delete old token cache
+        if CACHE_FILE.exists():
+            CACHE_FILE.unlink()
+
+        # Clean up session
+        del _setup_sessions[session_id]
+
+        print(f"✅ Credentials updated via QR code - client_id: {credentials['client_id'][:20]}...")
+
+        return {
+            "success": True,
+            "message": "Credentials saved"
+        }
+
+    async def setup_page_handler(self, session: str):
+        """Serve mobile-friendly credential input form"""
+        setup_form_html = Path(__file__).parent / "templates" / "setup_form.html"
+        if setup_form_html.exists():
+            html = setup_form_html.read_text()
+            # Inject session ID into the HTML
+            html = html.replace("{{SESSION_ID}}", session)
+            return html
+        return "<h1>Setup form not found</h1>"
 
     async def get_auth_url_handler(self):
         """Get Spotify authorization URL"""

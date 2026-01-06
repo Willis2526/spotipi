@@ -401,6 +401,25 @@
             transform: scale(1.04);
         }
 
+        .reset-btn {
+            width: 100%;
+            padding: 14px;
+            background: #e22134;
+            color: #ffffff;
+            border: none;
+            border-radius: 500px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .reset-btn:hover {
+            background: #ff3347;
+            transform: scale(1.04);
+        }
+
         svg {
             width: 24px;
             height: 24px;
@@ -496,6 +515,144 @@
             .buttons {
                 gap: 8px;
             }
+        }
+
+        /* QR Code Setup Styles */
+        .setup-tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 24px;
+            border-bottom: 1px solid #535353;
+        }
+
+        .setup-tab {
+            flex: 1;
+            padding: 12px;
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            border-radius: 0;
+            transition: all 0.3s;
+        }
+
+        .setup-tab:hover {
+            color: rgba(255, 255, 255, 0.9);
+            background: rgba(255, 255, 255, 0.05);
+            transform: none;
+        }
+
+        .setup-tab.active {
+            color: #1db954;
+            border-bottom-color: #1db954;
+        }
+
+        .setup-content {
+            animation: fadeIn 0.3s;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .qr-code-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 32px;
+            background: white;
+            border-radius: 8px;
+            margin: 24px auto;
+            max-width: 350px;
+        }
+
+        .qr-code-image {
+            width: 100%;
+            max-width: 300px;
+            height: auto;
+        }
+
+        .qr-instructions {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.7);
+            margin-bottom: 16px;
+            line-height: 1.5;
+        }
+
+        .qr-status {
+            text-align: center;
+            margin-top: 24px;
+        }
+
+        .qr-timer {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1db954;
+            margin-bottom: 12px;
+        }
+
+        .qr-waiting {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 14px;
+        }
+
+        .pulse-dot {
+            width: 12px;
+            height: 12px;
+            background: #1db954;
+            border-radius: 50%;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.8); }
+        }
+
+        .qr-loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+            padding: 48px;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #1db954;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .secondary-link-btn {
+            background: none;
+            border: none;
+            color: #1db954;
+            text-decoration: underline;
+            cursor: pointer;
+            padding: 8px;
+            margin-top: 16px;
+            width: 100%;
+            border-radius: 4px;
+        }
+
+        .secondary-link-btn:hover {
+            background: rgba(29, 185, 84, 0.1);
+            transform: none;
         }
     </style>
 </head>
@@ -604,23 +761,75 @@
 
                 <!-- Step 1: Enter Credentials -->
                 <div v-if="setupStatus.needs_setup || showCredentialsForm">
-                    <p style="margin-bottom: 20px; color: rgba(255,255,255,0.7); line-height: 1.6;">
-                        To get started, you'll need to create a Spotify Developer App.
-                        Visit <a href="https://developer.spotify.com/dashboard" target="_blank" style="color: #1db954;">developer.spotify.com/dashboard</a>
-                        to create an app and get your credentials.
-                    </p>
-
-                    <div class="form-group">
-                        <label>Client ID</label>
-                        <input v-model="config.client_id" type="text" placeholder="Enter your Spotify Client ID">
+                    <!-- Mode Switcher Tabs -->
+                    <div class="setup-tabs">
+                        <button
+                            class="setup-tab"
+                            :class="{ active: setupMode === 'manual' }"
+                            @click="switchToManualEntry">
+                            Manual Entry
+                        </button>
+                        <button
+                            class="setup-tab"
+                            :class="{ active: setupMode === 'qr' }"
+                            @click="switchToQREntry">
+                            Scan QR Code
+                        </button>
                     </div>
 
-                    <div class="form-group">
-                        <label>Client Secret</label>
-                        <input v-model="config.client_secret" type="password" placeholder="Enter your Spotify Client Secret">
+                    <!-- Manual Entry Form -->
+                    <div v-if="setupMode === 'manual'" class="setup-content">
+                        <p style="margin-bottom: 20px; color: rgba(255,255,255,0.7); line-height: 1.6;">
+                            To get started, you'll need to create a Spotify Developer App.
+                            Visit <a href="https://developer.spotify.com/dashboard" target="_blank" style="color: #1db954;">developer.spotify.com/dashboard</a>
+                            to create an app and get your credentials.
+                        </p>
+
+                        <div class="form-group">
+                            <label>Client ID</label>
+                            <input v-model="config.client_id" type="text" placeholder="Enter your Spotify Client ID">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Client Secret</label>
+                            <input v-model="config.client_secret" type="password" placeholder="Enter your Spotify Client Secret">
+                        </div>
+
+                        <button class="save-btn" @click="saveSetup">Continue to Authentication</button>
                     </div>
 
-                    <button class="save-btn" @click="saveSetup">Continue to Authentication</button>
+                    <!-- QR Code Display -->
+                    <div v-if="setupMode === 'qr'" class="setup-content">
+                        <div class="qr-instructions">
+                            <p>Scan this QR code with your smartphone to enter credentials</p>
+                        </div>
+
+                        <div class="qr-code-container">
+                            <img v-if="qrSession.qrCodeUrl"
+                                 :src="qrSession.qrCodeUrl"
+                                 alt="Setup QR Code"
+                                 class="qr-code-image">
+
+                            <div v-else class="qr-loading">
+                                <div class="spinner"></div>
+                                <p>Generating QR code...</p>
+                            </div>
+                        </div>
+
+                        <div v-if="qrSession.qrCodeUrl" class="qr-status">
+                            <div class="qr-timer">
+                                Expires in: {{ Math.floor(qrSession.expiresIn / 60) }}:{{ (qrSession.expiresIn % 60).toString().padStart(2, '0') }}
+                            </div>
+                            <div class="qr-waiting">
+                                <div class="pulse-dot"></div>
+                                Waiting for credentials...
+                            </div>
+                        </div>
+
+                        <button class="secondary-link-btn" @click="switchToManualEntry">
+                            Enter credentials manually instead
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Step 2: Auto-redirecting (shouldn't normally see this) -->
@@ -666,6 +875,13 @@
                 </div>
 
                 <button class="save-btn" @click="saveConfig">Save Configuration</button>
+
+                <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #535353;">
+                    <p style="margin-bottom: 12px; color: rgba(255,255,255,0.6); font-size: 14px;">
+                        Reset Spotipi to initial setup state by deleting all credentials.
+                    </p>
+                    <button class="reset-btn" @click="resetSpotipi">Reset Spotipi</button>
+                </div>
             </div>
         </div>
     </div>
@@ -704,7 +920,16 @@
                     error: '',
                     errorType: 'error',
                     isIdle: false,
-                    updateInterval: null
+                    updateInterval: null,
+                    setupMode: 'qr',
+                    qrSession: {
+                        id: null,
+                        qrCodeUrl: null,
+                        expiresIn: 0,
+                        polling: false
+                    },
+                    qrPollingInterval: null,
+                    qrCountdownInterval: null
                 }
             },
             computed: {
@@ -839,6 +1064,91 @@
                         this.showError('Error starting authentication');
                     }
                 },
+                async generateQRCode() {
+                    try {
+                        const res = await fetch('/api/setup/qr/generate');
+                        const data = await res.json();
+
+                        this.qrSession = {
+                            id: data.session_id,
+                            qrCodeUrl: data.qr_code_data_url,
+                            expiresIn: data.expires_in,
+                            polling: true
+                        };
+
+                        this.startQRPolling();
+                        this.startQRCountdown();
+                    } catch (e) {
+                        this.showError('Error generating QR code');
+                    }
+                },
+                startQRPolling() {
+                    this.qrPollingInterval = setInterval(async () => {
+                        try {
+                            const res = await fetch(`/api/setup/qr/status/${this.qrSession.id}`);
+                            const data = await res.json();
+
+                            if (data.credentials_received) {
+                                this.completeQRSetup();
+                            } else if (data.status === 'expired') {
+                                this.stopQRPolling();
+                                this.generateQRCode();
+                            }
+                        } catch (e) {
+                            console.error('Polling error:', e);
+                        }
+                    }, 2000);
+                },
+                async completeQRSetup() {
+                    this.stopQRPolling();
+
+                    try {
+                        const res = await fetch(`/api/setup/qr/complete/${this.qrSession.id}`, {
+                            method: 'POST'
+                        });
+
+                        if (res.ok) {
+                            this.showError('✓ Credentials received!', 'success');
+                            this.showCredentialsForm = false;
+                            // Automatically redirect to Spotify auth
+                            this.authenticateWithSpotify();
+                        }
+                    } catch (e) {
+                        this.showError('Error completing setup');
+                    }
+                },
+                stopQRPolling() {
+                    if (this.qrPollingInterval) {
+                        clearInterval(this.qrPollingInterval);
+                        this.qrPollingInterval = null;
+                    }
+                    if (this.qrCountdownInterval) {
+                        clearInterval(this.qrCountdownInterval);
+                        this.qrCountdownInterval = null;
+                    }
+                    this.qrSession.polling = false;
+                },
+                startQRCountdown() {
+                    // Clear any existing countdown
+                    if (this.qrCountdownInterval) {
+                        clearInterval(this.qrCountdownInterval);
+                    }
+                    this.qrCountdownInterval = setInterval(() => {
+                        this.qrSession.expiresIn--;
+                        if (this.qrSession.expiresIn <= 0) {
+                            clearInterval(this.qrCountdownInterval);
+                            this.qrCountdownInterval = null;
+                        }
+                    }, 1000);
+                },
+                switchToManualEntry() {
+                    this.stopQRPolling();
+                    this.setupMode = 'manual';
+                },
+                switchToQREntry() {
+                    this.setupMode = 'qr';
+                    this.generateQRCode();
+                },
                 async saveConfig() {
                     // Validate credentials are not empty
                     if (!this.config.client_id || !this.config.client_secret) {
@@ -872,6 +1182,31 @@
                         }
                     } catch (e) {
                         this.showError('Error saving config');
+                    }
+                },
+                async resetSpotipi() {
+                    // Confirm with user
+                    if (!confirm('Are you sure you want to reset Spotipi? This will delete all credentials and you will need to set up again.')) {
+                        return;
+                    }
+
+                    try {
+                        const res = await fetch('/api/config', {
+                            method: 'DELETE'
+                        });
+
+                        if (res.ok) {
+                            this.showSettings = false;
+                            this.showError('✓ Spotipi reset successfully', 'success');
+                            // Reload the page to trigger setup wizard
+                            setTimeout(() => {
+                                window.location.reload();
+                            }, 1000);
+                        } else {
+                            this.showError('Error resetting Spotipi');
+                        }
+                    } catch (e) {
+                        this.showError('Error resetting Spotipi');
                     }
                 },
                 async updatePlayback() {

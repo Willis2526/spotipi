@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spotipi Setup</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(180deg, #2a2a2a 0%, #1a1a1a 100%);
+            color: #ffffff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            padding-top: 40px;
+        }
+
+        .logo {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .logo h1 {
+            font-size: 32px;
+            font-weight: 700;
+            color: #1db954;
+        }
+
+        .card {
+            background: #282828;
+            border-radius: 12px;
+            padding: 32px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        .instructions {
+            margin-bottom: 24px;
+            line-height: 1.6;
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        .instructions a {
+            color: #1db954;
+            text-decoration: none;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            font-weight: 700;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 14px;
+            background: #000000;
+            border: 2px solid #535353;
+            border-radius: 8px;
+            color: #ffffff;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #1db954;
+        }
+
+        .submit-btn {
+            width: 100%;
+            padding: 16px;
+            background: #1db954;
+            color: #000000;
+            border: none;
+            border-radius: 500px;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            transition: all 0.3s;
+        }
+
+        .submit-btn:hover {
+            background: #1ed760;
+            transform: scale(1.02);
+        }
+
+        .submit-btn:disabled {
+            background: #535353;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .message {
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+            font-weight: 600;
+            display: none;
+        }
+
+        .message.success {
+            background: rgba(29, 185, 84, 0.2);
+            border: 2px solid #1db954;
+            color: #1ed760;
+            display: block;
+        }
+
+        .message.error {
+            background: rgba(226, 33, 52, 0.2);
+            border: 2px solid #e22134;
+            color: #ff6b6b;
+            display: block;
+        }
+
+        .success-icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <h1>Spotipi</h1>
+        </div>
+
+        <div class="card">
+            <div id="form-view">
+                <div class="instructions">
+                    <p>Enter your Spotify Developer credentials to set up Spotipi.</p>
+                    <p style="margin-top: 12px;">
+                        Get your credentials from
+                        <a href="https://developer.spotify.com/dashboard" target="_blank">
+                            developer.spotify.com/dashboard
+                        </a>
+                    </p>
+                </div>
+
+                <div id="error-message" class="message"></div>
+
+                <form id="setup-form">
+                    <div class="form-group">
+                        <label>Client ID</label>
+                        <input
+                            type="text"
+                            id="client_id"
+                            placeholder="Enter your Spotify Client ID"
+                            autocomplete="off"
+                            required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Client Secret</label>
+                        <input
+                            type="password"
+                            id="client_secret"
+                            placeholder="Enter your Spotify Client Secret"
+                            autocomplete="off"
+                            required>
+                    </div>
+
+                    <button type="submit" class="submit-btn" id="submit-btn">
+                        Submit Credentials
+                    </button>
+                </form>
+            </div>
+
+            <div id="success-view" style="display: none; text-align: center;">
+                <div class="success-icon">✓</div>
+                <div class="message success">
+                    Credentials sent successfully!<br>
+                    Return to your Spotipi device to continue.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const SESSION_ID = '{{SESSION_ID}}';
+
+        document.getElementById('setup-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const clientId = document.getElementById('client_id').value.trim();
+            const clientSecret = document.getElementById('client_secret').value.trim();
+            const submitBtn = document.getElementById('submit-btn');
+            const errorMsg = document.getElementById('error-message');
+
+            // Validation
+            if (!clientId || !clientSecret) {
+                showError('Please fill in both fields');
+                return;
+            }
+
+            if (clientId.length < 10 || clientSecret.length < 10) {
+                showError('Credentials appear to be invalid');
+                return;
+            }
+
+            // Disable button
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Sending...';
+            errorMsg.classList.remove('error');
+            errorMsg.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/setup/qr/submit', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        session_id: SESSION_ID,
+                        client_id: clientId,
+                        client_secret: clientSecret
+                    })
+                });
+
+                if (response.ok) {
+                    // Show success view
+                    document.getElementById('form-view').style.display = 'none';
+                    document.getElementById('success-view').style.display = 'block';
+                } else {
+                    const data = await response.json();
+                    showError(data.detail || 'Error submitting credentials');
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Submit Credentials';
+                }
+            } catch (error) {
+                showError('Network error. Please try again.');
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Submit Credentials';
+            }
+        });
+
+        function showError(message) {
+            const errorMsg = document.getElementById('error-message');
+            errorMsg.textContent = message;
+            errorMsg.classList.add('error');
+            errorMsg.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
